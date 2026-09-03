@@ -24,8 +24,8 @@ alongside it.
 **Backend** — Python 3.13, FastAPI, Pydantic v2, Uvicorn. Tested with pytest
 and httpx.
 
-**Frontend** — React 19, Vite 8, Tailwind CSS v4 (via `@tailwindcss/vite`),
-Axios. Tested with Vitest and React Testing Library.
+**Frontend** — React 19 with TypeScript, Vite 8, Tailwind CSS v4 (via
+`@tailwindcss/vite`), Axios. Tested with Vitest and React Testing Library.
 
 **Deployment** — Docker Compose: nginx serves the built bundle and reverse
 proxies `/api/` to the backend container.
@@ -38,8 +38,9 @@ backend/
   tests/               unit + integration suites
 frontend/
   src/components/      the calculator UI
-  src/api/client.js    the only module that talks to the network
-  src/operations.js    operation catalogue, mirrors the backend enum
+  src/api/client.ts    the only module that talks to the network; types mirror
+                       the Pydantic models
+  src/operations.ts    operation catalogue, mirrors the backend enum
   tests/               Vitest + RTL suites
 docs/
   ARCHITECTURE.md      separation of concerns, data flow, decision log
@@ -49,6 +50,22 @@ docs/
 ## Design decisions
 
 Full decision log in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### Language selection trade-off
+
+Go was the preferred backend language for this assessment. I chose
+Python/FastAPI instead, to maximise delivery velocity, to lean on Pydantic's
+runtime validation, and to sustain a strict TDD paradigm within the time box —
+all of which depend on working in a stack I know well. Python, FastAPI, React
+and TypeScript are the tools I am most fluent in, and that fluency is what made
+it possible to lead with tests at both layers, iterate on the error taxonomy,
+and reason about the edge cases rather than about the language.
+
+The trade-off is deliberate rather than incidental: I would rather submit work
+whose every decision I can defend than a translation into a language I could
+not discuss with the same depth. The architecture is the transferable part —
+pure domain logic with no framework imports, a thin HTTP layer, typed contracts
+at the boundary, exhaustive tests — and it ports to Go without redesign.
 
 ### FastAPI for the backend
 
@@ -78,6 +95,17 @@ duplicating the arithmetic this project deliberately keeps server-side, or
 forces the API into a stateful per-keystroke contract. A V2 could add the
 numpad, but it would need reworked backend contracts and considerably more
 edge-case mapping.
+
+### TypeScript across the boundary
+
+The interfaces in `src/api/client.ts` mirror the Pydantic models, so the
+contract is checked at compile time on both sides of the wire. `OperationId` is
+a union of the seven ids the backend accepts, which means a typo is a build
+error rather than a 422 discovered at runtime, and `CalculationResponse` makes
+the `b: number | null` on unary responses impossible to forget.
+
+`npm run build` runs `tsc -b` before Vite, so a type error fails the build
+rather than shipping.
 
 ### Nginx reverse proxy for `/api`
 
@@ -156,6 +184,7 @@ pytest -v                         # per-test names
 npm test                          # single run, 106 tests
 npm run test:watch                # re-runs on file change
 npm test -- Calculator            # only files matching "Calculator"
+npm run typecheck                 # tsc -b, no emit
 ```
 
 20 of the frontend tests are cross-layer: they drive the real UI against a real
@@ -180,13 +209,13 @@ cd frontend && npm run test:coverage
 | | Statements | Branches | Detail |
 | --- | --- | --- | --- |
 | Backend (`logic/`, `models/`, `main.py`) | **100%** | — | 131 statements, 0 missed |
-| Frontend (`src/`, excluding `main.jsx`) | **100%** | 100% | 79/79 statements, 24/24 functions |
+| Frontend (`src/`, excluding `main.tsx`) | **100%** | 100% | 79/79 statements, 25/25 functions |
 
 Backend coverage is measured against the application packages only —
 `.coveragerc` excludes the test modules, since reporting the tests' own
 coverage inflates the number without saying anything about the code under test.
 
-Frontend coverage excludes `main.jsx`, the three-line ReactDOM bootstrap, which
+Frontend coverage excludes `main.tsx`, the three-line ReactDOM bootstrap, which
 has nothing to assert. The figures are the same with or without a backend
 running: the cross-layer tests exercise paths the mocked suites already cover.
 

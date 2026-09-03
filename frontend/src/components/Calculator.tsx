@@ -1,8 +1,21 @@
 import { useState } from 'react'
 
-import { ApiError, calculate } from '../api/client.js'
-import { OPERATIONS, isUnary, operationById } from '../operations.js'
-import { formatResult } from '../utils/format.js'
+import { ApiError, calculate } from '../api/client'
+import type { CalculationRequest } from '../api/client'
+import { OPERATIONS, isUnary, operationById } from '../operations'
+import type { OperationId } from '../operations'
+import { formatResult } from '../utils/format'
+
+/** Which of the two fields is being reported on, used to word the message. */
+type OperandPosition = 'first' | 'second'
+
+type ParsedOperand = { ok: true; value: number } | { ok: false; error: string }
+
+/** What is on screen after a successful calculation. */
+interface DisplayResult {
+  expression: string
+  value: string
+}
 
 /**
  * Read one operand out of its text field.
@@ -11,25 +24,30 @@ import { formatResult } from '../utils/format.js'
  * number input silently discards what it cannot parse, so a user typing "abc"
  * would see the field empty and no explanation of what went wrong. Parsing it
  * ourselves means we can say which value is wrong and why.
- *
- * @returns {{value: number} | {error: string}}
  */
-function parseOperand(raw, position) {
+function parseOperand(raw: string, position: OperandPosition): ParsedOperand {
   const text = raw.trim()
 
   if (text === '') {
-    return { error: `Enter a number for the ${position} value.` }
+    return { ok: false, error: `Enter a number for the ${position} value.` }
   }
 
   const value = Number(text)
   if (!Number.isFinite(value)) {
-    return { error: `The ${position} value is not a valid number.` }
+    return { ok: false, error: `The ${position} value is not a valid number.` }
   }
 
-  return { value }
+  return { ok: true, value }
 }
 
-function OperandField({ id, label, value, onChange }) {
+interface OperandFieldProps {
+  id: string
+  label: string
+  value: string
+  onChange: (value: string) => void
+}
+
+function OperandField({ id, label, value, onChange }: OperandFieldProps) {
   return (
     <div>
       <label
@@ -55,16 +73,16 @@ function OperandField({ id, label, value, onChange }) {
 }
 
 export default function Calculator() {
-  const [operation, setOperation] = useState(OPERATIONS[0].id)
+  const [operation, setOperation] = useState<OperationId>('add')
   const [a, setA] = useState('')
   const [b, setB] = useState('')
-  const [result, setResult] = useState(null)
+  const [result, setResult] = useState<DisplayResult | null>(null)
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
 
   const unary = isUnary(operation)
 
-  function chooseOperation(id) {
+  function chooseOperation(id: OperationId) {
     setOperation(id)
     // A result from the previous operation would be stale and misleading next
     // to a different operator.
@@ -72,43 +90,43 @@ export default function Calculator() {
     setError('')
   }
 
-  function fail(message) {
+  function fail(message: string) {
     setError(message)
     setResult(null)
   }
 
-  async function handleSubmit(event) {
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
     const first = parseOperand(a, 'first')
-    if (first.error) {
+    if (!first.ok) {
       fail(first.error)
       return
     }
 
-    let second = null
+    let second: ParsedOperand | null = null
     if (!unary) {
       second = parseOperand(b, 'second')
-      if (second.error) {
+      if (!second.ok) {
         fail(second.error)
         return
       }
     }
 
-    const request = unary
-      ? { operation, a: first.value }
-      : { operation, a: first.value, b: second.value }
+    const request: CalculationRequest =
+      second === null
+        ? { operation, a: first.value }
+        : { operation, a: first.value, b: second.value }
 
     setError('')
     setPending(true)
 
     try {
       const response = await calculate(request)
-      const { expression } = operationById(operation)
       setResult({
         // Rendered from the values that were sent, so editing a field
         // afterwards cannot make the displayed sum disagree with the answer.
-        expression: expression(request.a, request.b),
+        expression: operationById(operation)!.expression(request.a, request.b),
         value: formatResult(response.result),
       })
     } catch (failure) {

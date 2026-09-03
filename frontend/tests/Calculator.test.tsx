@@ -12,9 +12,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../src/api/client.js', () => ({
+vi.mock('../src/api/client', () => ({
   ApiError: class ApiError extends Error {
-    constructor(code, message) {
+    code: string
+    constructor(code: string, message: string) {
       super(message)
       this.name = 'ApiError'
       this.code = code
@@ -23,16 +24,18 @@ vi.mock('../src/api/client.js', () => ({
   calculate: vi.fn(),
 }))
 
-import { ApiError, calculate } from '../src/api/client.js'
-import Calculator from '../src/components/Calculator.jsx'
+import { ApiError, calculate } from '../src/api/client'
+import Calculator from '../src/components/Calculator'
+
+const mockCalculate = vi.mocked(calculate)
 
 /** Type a value into a labelled field. */
-function type(label, value) {
+function type(label: RegExp, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } })
 }
 
 /** Choose an operation by its accessible name. */
-function choose(name) {
+function choose(name: RegExp) {
   fireEvent.click(screen.getByRole('button', { name }))
 }
 
@@ -41,19 +44,24 @@ function submit() {
 }
 
 /** Fill in a binary calculation and submit it. */
-function calculateWith(a, b) {
+function calculateWith(a: string, b: string) {
   type(/first number/i, a)
   type(/second number/i, b)
   submit()
 }
 
-function resolveWith(result) {
-  calculate.mockResolvedValue({ result })
+function resolveWith(result: number) {
+  mockCalculate.mockResolvedValue({
+    operation: 'add',
+    a: 0,
+    b: 0,
+    result,
+  })
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  calculate.mockResolvedValue({ result: 0 })
+  resolveWith(0)
 })
 
 describe('initial render', () => {
@@ -92,8 +100,8 @@ describe('initial render', () => {
 
   it('starts with empty fields', () => {
     render(<Calculator />)
-    expect(screen.getByLabelText(/first number/i).value).toBe('')
-    expect(screen.getByLabelText(/second number/i).value).toBe('')
+    expect(screen.getByLabelText<HTMLInputElement>(/first number/i).value).toBe('')
+    expect(screen.getByLabelText<HTMLInputElement>(/second number/i).value).toBe('')
   })
 
   it('shows no result and no error before anything is calculated', () => {
@@ -104,7 +112,7 @@ describe('initial render', () => {
 
   it('does not call the API on mount', () => {
     render(<Calculator />)
-    expect(calculate).not.toHaveBeenCalled()
+    expect(mockCalculate).not.toHaveBeenCalled()
   })
 })
 
@@ -142,7 +150,7 @@ describe('choosing an operation', () => {
     render(<Calculator />)
     type(/first number/i, '7')
     choose(/division/i)
-    expect(screen.getByLabelText(/first number/i).value).toBe('7')
+    expect(screen.getByLabelText<HTMLInputElement>(/first number/i).value).toBe('7')
   })
 })
 
@@ -176,7 +184,7 @@ describe('client-side validation', () => {
   it('does not call the API when validation fails', () => {
     render(<Calculator />)
     calculateWith('abc', '3')
-    expect(calculate).not.toHaveBeenCalled()
+    expect(mockCalculate).not.toHaveBeenCalled()
   })
 
   it('does not require a second operand for square root', async () => {
@@ -185,21 +193,21 @@ describe('client-side validation', () => {
     choose(/square root/i)
     type(/first number/i, '9')
     submit()
-    await waitFor(() => expect(calculate).toHaveBeenCalled())
+    await waitFor(() => expect(mockCalculate).toHaveBeenCalled())
   })
 
   it('accepts a negative number', async () => {
     resolveWith(-1)
     render(<Calculator />)
     calculateWith('-4', '3')
-    await waitFor(() => expect(calculate).toHaveBeenCalled())
+    await waitFor(() => expect(mockCalculate).toHaveBeenCalled())
   })
 
   it('accepts a decimal', async () => {
     resolveWith(3)
     render(<Calculator />)
     calculateWith('2.5', '0.5')
-    await waitFor(() => expect(calculate).toHaveBeenCalled())
+    await waitFor(() => expect(mockCalculate).toHaveBeenCalled())
   })
 
   it('clears a validation error once a valid calculation runs', async () => {
@@ -221,7 +229,7 @@ describe('sending the request', () => {
     calculateWith('4', '5')
 
     await waitFor(() =>
-      expect(calculate).toHaveBeenCalledWith({
+      expect(mockCalculate).toHaveBeenCalledWith({
         operation: 'multiply',
         a: 4,
         b: 5,
@@ -237,7 +245,7 @@ describe('sending the request', () => {
     submit()
 
     await waitFor(() =>
-      expect(calculate).toHaveBeenCalledWith({ operation: 'square_root', a: 9 }),
+      expect(mockCalculate).toHaveBeenCalledWith({ operation: 'square_root', a: 9 }),
     )
   })
 
@@ -248,22 +256,30 @@ describe('sending the request', () => {
     type(/second number/i, '3')
     fireEvent.submit(screen.getByRole('form', { name: /calculator/i }))
 
-    await waitFor(() => expect(calculate).toHaveBeenCalled())
+    await waitFor(() => expect(mockCalculate).toHaveBeenCalled())
   })
 
   it('disables the submit button while the request is in flight', async () => {
-    let release
-    calculate.mockReturnValue(new Promise((resolve) => (release = resolve)))
+    let release: (value: never) => void = () => {}
+    mockCalculate.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve as (value: never) => void
+      }),
+    )
     render(<Calculator />)
     calculateWith('2', '3')
 
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /calculat/i }).disabled).toBe(true),
+      expect(
+        screen.getByRole<HTMLButtonElement>('button', { name: /calculat/i }).disabled,
+      ).toBe(true),
     )
 
-    release({ result: 5 })
+    release({ operation: 'add', a: 2, b: 3, result: 5 } as never)
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /calculat/i }).disabled).toBe(false),
+      expect(
+        screen.getByRole<HTMLButtonElement>('button', { name: /calculat/i }).disabled,
+      ).toBe(false),
     )
   })
 })
@@ -305,16 +321,19 @@ describe('displaying the result', () => {
     [/percentage/i, '15', '200', 30, /15% of 200/],
     [/multiplication/i, '4', '5', 20, /4 × 5/],
     [/division/i, '9', '3', 3, /9 ÷ 3/],
-  ])('renders the expression for %s', async (name, a, b, result, expression) => {
-    resolveWith(result)
-    render(<Calculator />)
-    choose(name)
-    calculateWith(a, b)
+  ])(
+    'renders the expression for %s',
+    async (name, a, b, result, expression) => {
+      resolveWith(result)
+      render(<Calculator />)
+      choose(name)
+      calculateWith(a, b)
 
-    await waitFor(() =>
-      expect(screen.getByRole('status').textContent).toMatch(expression),
-    )
-  })
+      await waitFor(() =>
+        expect(screen.getByRole('status').textContent).toMatch(expression),
+      )
+    },
+  )
 
   it('renders the expression for a unary operation', async () => {
     resolveWith(9)
@@ -343,7 +362,7 @@ describe('displaying the result', () => {
 
 describe('reporting API errors', () => {
   it('shows the message from a domain error', async () => {
-    calculate.mockRejectedValue(
+    mockCalculate.mockRejectedValue(
       new ApiError('division_by_zero', 'cannot divide by zero'),
     )
     render(<Calculator />)
@@ -356,7 +375,7 @@ describe('reporting API errors', () => {
   })
 
   it('shows a message when the backend is unreachable', async () => {
-    calculate.mockRejectedValue(
+    mockCalculate.mockRejectedValue(
       new ApiError('network_error', 'Cannot reach the calculator service.'),
     )
     render(<Calculator />)
@@ -373,7 +392,7 @@ describe('reporting API errors', () => {
     calculateWith('2', '3')
     await waitFor(() => expect(screen.getByRole('status')).toBeDefined())
 
-    calculate.mockRejectedValue(new ApiError('invalid_input', 'nope'))
+    mockCalculate.mockRejectedValue(new ApiError('invalid_input', 'nope'))
     calculateWith('2', '0')
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull())
   })
@@ -381,7 +400,7 @@ describe('reporting API errors', () => {
   it('shows a generic message when the failure is not an ApiError', async () => {
     // A bug in the client, not a response from the server. The user still
     // needs to be told something rather than seeing a silent no-op.
-    calculate.mockRejectedValue(new TypeError('undefined is not a function'))
+    mockCalculate.mockRejectedValue(new TypeError('undefined is not a function'))
     render(<Calculator />)
     calculateWith('2', '3')
 
@@ -391,7 +410,7 @@ describe('reporting API errors', () => {
   })
 
   it('does not leak an internal error message to the user', async () => {
-    calculate.mockRejectedValue(new TypeError('undefined is not a function'))
+    mockCalculate.mockRejectedValue(new TypeError('undefined is not a function'))
     render(<Calculator />)
     calculateWith('2', '3')
 
@@ -400,12 +419,14 @@ describe('reporting API errors', () => {
   })
 
   it('re-enables the button after a failure', async () => {
-    calculate.mockRejectedValue(new ApiError('invalid_input', 'nope'))
+    mockCalculate.mockRejectedValue(new ApiError('invalid_input', 'nope'))
     render(<Calculator />)
     calculateWith('2', '3')
 
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /calculat/i }).disabled).toBe(false),
+      expect(
+        screen.getByRole<HTMLButtonElement>('button', { name: /calculat/i }).disabled,
+      ).toBe(false),
     )
   })
 })

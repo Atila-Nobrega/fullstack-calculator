@@ -4,8 +4,46 @@
  * Everything above it deals in resolved values and `ApiError`s, never in HTTP
  * status codes or axios internals. That keeps the component testable by mocking
  * one module, and means swapping the HTTP library later touches this file only.
+ *
+ * The types here mirror the backend's Pydantic models, so the contract is
+ * checked at compile time on both sides of the wire.
  */
 import axios from 'axios'
+
+import type { OperationId } from '../operations'
+
+/** Mirrors `CalculateRequest` in `backend/models/schemas.py`. */
+export interface CalculationRequest {
+  operation: OperationId
+  a: number
+  /** Omitted for unary operations; the backend rejects it for those. */
+  b?: number
+}
+
+/** Mirrors `CalculateResponse`. `b` comes back null for unary operations. */
+export interface CalculationResponse {
+  operation: OperationId
+  a: number
+  b: number | null
+  result: number
+}
+
+/**
+ * Mirrors the backend's `ErrorCode`, plus `network_error` for the case where
+ * the request never got an answer at all.
+ */
+export type ErrorCode =
+  | 'validation_error'
+  | 'division_by_zero'
+  | 'invalid_input'
+  | 'result_overflow'
+  | 'network_error'
+
+/** Mirrors `ErrorResponse`. */
+interface ErrorBody {
+  error: ErrorCode
+  detail?: string
+}
 
 /**
  * Work out where the API lives.
@@ -23,11 +61,11 @@ import axios from 'axios'
  *
  * Set `VITE_API_URL` to override -- needed only when the frontend is deployed
  * somewhere that is not proxying to the backend for it.
- *
- * @param {string | undefined} configured `VITE_API_URL`, if set
- * @param {boolean} isProduction `import.meta.env.PROD`
  */
-export function resolveBaseUrl(configured, isProduction) {
+export function resolveBaseUrl(
+  configured: string | null | undefined,
+  isProduction: boolean,
+): string {
   if (configured !== undefined && configured !== null) {
     return configured
   }
@@ -48,40 +86,51 @@ const NETWORK_ERROR_MESSAGE =
 /**
  * A failure the UI can explain to the user.
  *
- * `code` is the backend's machine-readable `ErrorCode` -- `division_by_zero`,
- * `invalid_input`, `result_overflow`, `validation_error` -- or `network_error`
- * when the request never got an answer. Branch on `code`; show `message`.
+ * `code` is the backend's machine-readable `ErrorCode`, or `network_error` when
+ * the request never got an answer. Branch on `code`; show `message`.
  */
 export class ApiError extends Error {
-  constructor(code, message) {
+  readonly code: ErrorCode
+
+  constructor(code: ErrorCode, message: string) {
     super(message)
     this.name = 'ApiError'
     this.code = code
   }
 }
 
+/** Does this look like the backend's error body rather than, say, an HTML page? */
+function isErrorBody(body: unknown): body is ErrorBody {
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    typeof (body as { error?: unknown }).error === 'string'
+  )
+}
+
 /**
  * Perform one calculation.
  *
- * @param {{operation: string, a: number, b?: number}} request
- * @returns {Promise<{operation: string, a: number, b: number | null, result: number}>}
- * @throws {ApiError}
+ * @throws {ApiError} for both API-reported failures and unreachable backends.
  */
-export async function calculate({ operation, a, b }) {
+export async function calculate({
+  operation,
+  a,
+  b,
+}: CalculationRequest): Promise<CalculationResponse> {
   // `b` is omitted rather than sent as null: the backend rejects a unary
   // request that carries a second operand, and `{b: undefined}` would be
   // serialised away anyway -- being explicit makes the intent readable.
-  const payload =
+  const payload: CalculationRequest =
     b === undefined || b === null ? { operation, a } : { operation, a, b }
 
   try {
-    const { data } = await axios.post(CALCULATE_URL, payload)
+    const { data } = await axios.post<CalculationResponse>(CALCULATE_URL, payload)
     return data
   } catch (error) {
-    const body = error.response?.data
+    const body = (error as { response?: { data?: unknown } }).response?.data
 
-    // Our own ErrorResponse shape: {error, detail}.
-    if (body && typeof body === 'object' && typeof body.error === 'string') {
+    if (isErrorBody(body)) {
       throw new ApiError(body.error, body.detail ?? 'The calculation failed.')
     }
 

@@ -7,11 +7,12 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { OPERATIONS, isUnary } from '../src/operations.js'
+import { OPERATIONS, isUnary } from '../src/operations'
+import type { OperationId } from '../src/operations'
 
 // Copied deliberately rather than imported: if the backend enum changes, this
 // list should have to be updated by hand, which is the point of the check.
-const BACKEND_OPERATION_IDS = [
+const BACKEND_OPERATION_IDS: OperationId[] = [
   'add',
   'subtract',
   'multiply',

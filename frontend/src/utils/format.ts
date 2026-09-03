@@ -14,10 +14,10 @@ const SIGNIFICANT_DIGITS = 12
 /**
  * Render a number for display.
  *
- * @param {number} value
- * @returns {string} e.g. 5 -> "5", 0.30000000000000004 -> "0.3"
+ * @example formatResult(5) // "5"
+ * @example formatResult(0.30000000000000004) // "0.3"
  */
-export function formatResult(value) {
+export function formatResult(value: number): string {
   if (!Number.isFinite(value)) {
     // The API cannot return these, but a display helper should not throw.
     return String(value)

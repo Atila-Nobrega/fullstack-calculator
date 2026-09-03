@@ -19,13 +19,35 @@ import {
   ApiError,
   calculate,
   resolveBaseUrl,
-} from '../src/api/client.js'
+} from '../src/api/client'
+
+const post = vi.mocked(axios.post)
 
 /** Build the rejection axios produces for an HTTP error response. */
-function httpError(status, body) {
-  const error = new Error(`Request failed with status code ${status}`)
+function httpError(status: number, body: unknown) {
+  const error = new Error(`Request failed with status code ${status}`) as Error & {
+    response?: { status: number; data: unknown }
+  }
   error.response = { status, data: body }
   return error
+}
+
+/**
+ * Await a call that is expected to fail and hand back the ApiError.
+ *
+ * `promise.catch((e) => e)` would type the result as the union of the resolved
+ * value and the error, so every assertion on `.code` would need a cast. This
+ * also turns an unexpected success into a clear failure rather than a confusing
+ * "property does not exist" further down.
+ */
+async function rejection(promise: Promise<unknown>): Promise<ApiError> {
+  const resolved = Symbol('resolved')
+  const outcome = await promise.then(() => resolved).catch((error: unknown) => error)
+
+  if (outcome === resolved) {
+    throw new Error('expected the call to reject, but it resolved')
+  }
+  return outcome as ApiError
 }
 
 beforeEach(() => {
@@ -75,40 +97,36 @@ describe('resolveBaseUrl', () => {
 
 describe('calculate', () => {
   it('posts to the calculate endpoint', async () => {
-    axios.post.mockResolvedValue({ data: { result: 5 } })
+    post.mockResolvedValue({ data: { result: 5 } })
 
     await calculate({ operation: 'add', a: 2, b: 3 })
 
-    expect(axios.post).toHaveBeenCalledTimes(1)
-    expect(axios.post.mock.calls[0][0]).toBe(`${API_BASE_URL}/api/calculate`)
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post.mock.calls[0]![0]).toBe(`${API_BASE_URL}/api/calculate`)
   })
 
   it('sends both operands for a binary operation', async () => {
-    axios.post.mockResolvedValue({ data: { result: 5 } })
+    post.mockResolvedValue({ data: { result: 5 } })
 
     await calculate({ operation: 'add', a: 2, b: 3 })
 
-    expect(axios.post.mock.calls[0][1]).toEqual({
-      operation: 'add',
-      a: 2,
-      b: 3,
-    })
+    expect(post.mock.calls[0]![1]).toEqual({ operation: 'add', a: 2, b: 3 })
   })
 
   it('omits b entirely for a unary operation', async () => {
     // The backend rejects a square_root request that carries b, so an
     // undefined value must not be serialised as a null.
-    axios.post.mockResolvedValue({ data: { result: 3 } })
+    post.mockResolvedValue({ data: { result: 3 } })
 
     await calculate({ operation: 'square_root', a: 9 })
 
-    expect(axios.post.mock.calls[0][1]).toEqual({ operation: 'square_root', a: 9 })
-    expect('b' in axios.post.mock.calls[0][1]).toBe(false)
+    expect(post.mock.calls[0]![1]).toEqual({ operation: 'square_root', a: 9 })
+    expect('b' in (post.mock.calls[0]![1] as object)).toBe(false)
   })
 
   it('returns the response body on success', async () => {
     const body = { operation: 'add', a: 2, b: 3, result: 5 }
-    axios.post.mockResolvedValue({ data: body })
+    post.mockResolvedValue({ data: body })
 
     await expect(calculate({ operation: 'add', a: 2, b: 3 })).resolves.toEqual(body)
   })
@@ -116,7 +134,7 @@ describe('calculate', () => {
 
 describe('calculate error handling', () => {
   it('turns a 400 into an ApiError carrying the error code', async () => {
-    axios.post.mockRejectedValue(
+    post.mockRejectedValue(
       httpError(400, { error: 'division_by_zero', detail: 'cannot divide by zero' }),
     )
 
@@ -126,22 +144,22 @@ describe('calculate error handling', () => {
   })
 
   it('carries the server code and detail through', async () => {
-    axios.post.mockRejectedValue(
+    post.mockRejectedValue(
       httpError(400, { error: 'division_by_zero', detail: 'cannot divide by zero' }),
     )
 
-    const error = await calculate({ operation: 'divide', a: 1, b: 0 }).catch((e) => e)
+    const error = await rejection(calculate({ operation: 'divide', a: 1, b: 0 }))
 
     expect(error.code).toBe('division_by_zero')
     expect(error.message).toBe('cannot divide by zero')
   })
 
   it('handles a 422 validation error the same way', async () => {
-    axios.post.mockRejectedValue(
+    post.mockRejectedValue(
       httpError(422, { error: 'validation_error', detail: "'b' is missing" }),
     )
 
-    const error = await calculate({ operation: 'add', a: 1 }).catch((e) => e)
+    const error = await rejection(calculate({ operation: 'add', a: 1 }))
 
     expect(error.code).toBe('validation_error')
     expect(error.message).toBe("'b' is missing")
@@ -150,9 +168,9 @@ describe('calculate error handling', () => {
   it('falls back to a generic message when the error body has no detail', async () => {
     // Our API always sends one, but the code must not surface "undefined" to
     // the user if a proxy or a future version omits it.
-    axios.post.mockRejectedValue(httpError(400, { error: 'invalid_input' }))
+    post.mockRejectedValue(httpError(400, { error: 'invalid_input' }))
 
-    const error = await calculate({ operation: 'add', a: 1, b: 2 }).catch((e) => e)
+    const error = await rejection(calculate({ operation: 'add', a: 1, b: 2 }))
 
     expect(error.code).toBe('invalid_input')
     expect(error.message).toBe('The calculation failed.')
@@ -160,27 +178,27 @@ describe('calculate error handling', () => {
 
   it('reports an unreachable backend as a network error', async () => {
     // No `response` property: the request never got an answer.
-    axios.post.mockRejectedValue(new Error('Network Error'))
+    post.mockRejectedValue(new Error('Network Error'))
 
-    const error = await calculate({ operation: 'add', a: 1, b: 2 }).catch((e) => e)
+    const error = await rejection(calculate({ operation: 'add', a: 1, b: 2 }))
 
     expect(error).toBeInstanceOf(ApiError)
     expect(error.code).toBe('network_error')
   })
 
   it('gives the network error a message a user can act on', async () => {
-    axios.post.mockRejectedValue(new Error('Network Error'))
+    post.mockRejectedValue(new Error('Network Error'))
 
-    const error = await calculate({ operation: 'add', a: 1, b: 2 }).catch((e) => e)
+    const error = await rejection(calculate({ operation: 'add', a: 1, b: 2 }))
 
     expect(error.message).toMatch(/backend|service|server/i)
   })
 
   it('falls back to a network error when the body is not our error shape', async () => {
     // e.g. a proxy returning an HTML error page.
-    axios.post.mockRejectedValue(httpError(502, '<html>Bad Gateway</html>'))
+    post.mockRejectedValue(httpError(502, '<html>Bad Gateway</html>'))
 
-    const error = await calculate({ operation: 'add', a: 1, b: 2 }).catch((e) => e)
+    const error = await rejection(calculate({ operation: 'add', a: 1, b: 2 }))
 
     expect(error).toBeInstanceOf(ApiError)
     expect(error.code).toBe('network_error')

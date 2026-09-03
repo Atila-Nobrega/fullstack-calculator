@@ -8,7 +8,7 @@
 Two independently runnable applications, talking over HTTP/JSON:
 
 ```
-frontend/  React 19 + Vite 8 SPA      -> http://localhost:5173
+frontend/  React 19 + TypeScript SPA  -> http://localhost:5173  (Vite 8)
 backend/   FastAPI + Uvicorn service  -> http://localhost:8000
 ```
 
@@ -24,22 +24,44 @@ Containerised, they sit behind one origin instead — see §7.
 | Path | Responsibility |
 | --- | --- |
 | `index.html` | Vite entry document; mounts `#root`. |
-| `src/main.jsx` | React root bootstrap (`StrictMode`). |
-| `src/App.jsx` | Application shell; mounts the calculator. |
-| `src/components/Calculator.jsx` | The calculator UI: operand fields, operation buttons, result and error display. |
-| `src/api/client.js` | Axios wrapper around the API; the only module that talks to the network. |
-| `src/operations.js` | The operation catalogue — ids, labels, symbols, arity. |
-| `src/utils/format.js` | Result formatting for display. |
+| `src/main.tsx` | React root bootstrap (`StrictMode`). |
+| `src/App.tsx` | Application shell; mounts the calculator. |
+| `src/components/Calculator.tsx` | The calculator UI: operand fields, operation buttons, result and error display. |
+| `src/api/client.ts` | Axios wrapper around the API; the only module that talks to the network. |
+| `src/operations.ts` | The operation catalogue — ids, labels, symbols, arity. |
+| `src/utils/format.ts` | Result formatting for display. |
 | `src/index.css` | Tailwind v4 entry (`@import "tailwindcss"`). |
-| `vite.config.js` | Vite plugins and the Vitest configuration. |
+| `vite.config.ts` | Vite plugins and the Vitest configuration. |
+| `tsconfig.json` | Project references to the two configs below. |
+| `tsconfig.app.json` | Strict TypeScript for `src/` and `tests/`. |
+| `tsconfig.node.json` | TypeScript for `vite.config.ts`, which runs in Node. |
 | `tests/` | Vitest + React Testing Library suites, one per module. |
-| `tests/e2e.test.jsx` | Cross-layer suite: real UI, real client, real API. |
+| `tests/e2e.test.tsx` | Cross-layer suite: real UI, real client, real API. |
 | `.env.example` | Documents `VITE_API_URL`. |
 
-The split mirrors the backend's: `Calculator.jsx` owns presentation and local
-state, `client.js` owns the network, `format.js` and `operations.js` are pure
-modules with no React in them. Only `client.js` imports axios, so the component
+The split mirrors the backend's: `Calculator.tsx` owns presentation and local
+state, `client.ts` owns the network, `format.ts` and `operations.ts` are pure
+modules with no React in them. Only `client.ts` imports axios, so the component
 tests can mock one module and never touch HTTP.
+
+#### Types as the cross-layer contract
+
+`client.ts` declares `CalculationRequest`, `CalculationResponse`, `ErrorCode`
+and `OperationId` to mirror the Pydantic models exactly. The wire format is
+therefore described twice — once in Python for runtime validation, once in
+TypeScript for compile-time checking — and the two are kept honest by
+`tests/e2e.test.tsx`, which exchanges real payloads with the real API.
+
+`OperationId` is a union of the seven accepted ids rather than `string`, so a
+typo fails `tsc` instead of returning a 422 at runtime. `CalculationResponse`
+types `b` as `number | null`, making the unary case impossible to overlook.
+`npm run build` runs `tsc -b` before Vite, so a type error fails the build.
+
+TypeScript is compile-time only; it disappears at runtime. That is why the
+logic layer's own validation is still worth having, and why `client.ts` narrows
+unknown error bodies with a type guard rather than asserting a shape it cannot
+verify — the response comes off the network as `unknown` no matter what the
+types claim.
 
 #### Frontend module contract
 
@@ -47,14 +69,18 @@ Pinned by the Step 4 tests, before any of it is implemented:
 
 | Export | From | Behaviour |
 | --- | --- | --- |
-| `OPERATIONS` | `src/operations.js` | Ordered array of `{id, label, symbol, expression}`; ids match the backend enum exactly. |
-| `isUnary(id)` | `src/operations.js` | True only for `square_root`; an unknown id is binary, not an error. |
-| `operationById(id)` | `src/operations.js` | Look up one entry. |
-| `formatResult(value)` | `src/utils/format.js` | Number → display string, trimming float noise. |
-| `API_BASE_URL` | `src/api/client.js` | Backend origin. |
-| `ApiError` | `src/api/client.js` | `Error` subclass carrying `.code` and `.message`. |
-| `calculate({operation, a, b})` | `src/api/client.js` | POSTs and returns the body; throws `ApiError` on failure. Omits `b` when undefined. |
-| `Calculator` (default) | `src/components/Calculator.jsx` | The UI described below. |
+| `OperationId` | `src/operations.ts` | Union of the seven ids the backend accepts. |
+| `Operation` | `src/operations.ts` | `{id, label, symbol, expression}`. |
+| `OPERATIONS` | `src/operations.ts` | Ordered `readonly Operation[]`; ids match the backend enum exactly. |
+| `isUnary(id)` | `src/operations.ts` | True only for `square_root`; takes any `string`, since it answers a question about arity rather than asserting validity. |
+| `operationById(id)` | `src/operations.ts` | Look up one entry. |
+| `formatResult(value)` | `src/utils/format.ts` | `number → string`, trimming float noise. |
+| `API_BASE_URL` | `src/api/client.ts` | Backend origin; empty means same-origin. |
+| `resolveBaseUrl(configured, isProduction)` | `src/api/client.ts` | The rule behind `API_BASE_URL`, exported so it can be tested. |
+| `CalculationRequest` / `CalculationResponse` / `ErrorCode` | `src/api/client.ts` | Types mirroring the Pydantic models. |
+| `ApiError` | `src/api/client.ts` | `Error` subclass carrying a typed `.code` and `.message`. |
+| `calculate(request)` | `src/api/client.ts` | POSTs and returns the body; throws `ApiError` on failure. Omits `b` when undefined. |
+| `Calculator` (default) | `src/components/Calculator.tsx` | The UI described below. |
 
 UI behaviour the tests require:
 
@@ -185,9 +211,12 @@ impossible *arithmetic* (negative square root, division by zero).
 - `models/schemas.py` defines `Operation`, `ErrorCode`, `CalculateRequest`,
   `CalculateResponse`, `ErrorResponse` and `HealthResponse`.
 - **333 backend tests pass** — 282 unit, 51 integration.
-- **88 frontend tests pass** with a backend running — 68 mocked, 20 cross-layer.
-  Without a backend the cross-layer suite skips and the other 68 still pass.
-- `npm run lint` is clean; `npm run build` succeeds (245 kB, 80 kB gzipped).
+- **106 frontend tests pass** with a backend running — 86 mocked, 20 cross-layer.
+  Without a backend the cross-layer suite skips and the other 86 still pass.
+- **Coverage is 100% on both layers** — 131 backend statements, and 79
+  statements / 43 branches / 25 functions on the frontend.
+- `npm run typecheck` and `npm run lint` are clean; `npm run build` (which runs
+  `tsc -b` first) succeeds at 245 kB, 80 kB gzipped.
 - Both dev servers have been run together and verified: Vite serves the app on
   5173, the bundle resolves `API_BASE_URL` to `http://localhost:8000`, and the
   API answers on 8000.
@@ -274,14 +303,16 @@ Frontend tests run from `frontend/`:
 
 ```powershell
 cd frontend
-npm test          # single run
+npm test              # single run
 npm run test:watch
+npm run test:coverage
+npm run typecheck     # tsc -b, no emit
 ```
 
-Vitest is configured inside `vite.config.js` (`environment: 'jsdom'`,
-`setupFiles: './tests/setup.js'`, `include: ['tests/**/*.test.{js,jsx}']`), so
+Vitest is configured inside `vite.config.ts` (`environment: 'jsdom'`,
+`setupFiles: './tests/setup.ts'`, `include: ['tests/**/*.test.{ts,tsx}']`), so
 the test build reuses the app's own plugins and resolution rather than a second
-config that could drift from it. `tests/setup.js` runs RTL's `cleanup()` after
+config that could drift from it. `tests/setup.ts` runs RTL's `cleanup()` after
 each test; without it, each render would stack on the previous one's markup and
 role queries would start matching two of everything.
 
@@ -291,14 +322,14 @@ so the suite runs against what is already installed.
 
 #### The cross-layer suite
 
-Every other frontend suite mocks `client.js`, which means a contract drift
+Every other frontend suite mocks `client.ts`, which means a contract drift
 between the two layers — a renamed error code, a changed field, a CORS origin
-that stopped matching — would pass all of them. `tests/e2e.test.jsx` is the one
+that stopped matching — would pass all of them. `tests/e2e.test.tsx` is the one
 place that catches it: nothing is mocked, so the real component calls the real
 client, which calls the real API.
 
 It runs inside jsdom, which enforces CORS on `XMLHttpRequest`. Setting the jsdom
-document origin to `http://localhost:5173` in `vite.config.js` therefore makes
+document origin to `http://localhost:5173` in `vite.config.ts` therefore makes
 the suite subject to exactly the origin checks a browser applies — a backend
 CORS misconfiguration fails these tests rather than surfacing later in a console
 the tests never read.
@@ -313,7 +344,7 @@ cd backend; .\.venv\Scripts\Activate.ps1; uvicorn main:app
 cd frontend; npm test
 ```
 
-With the backend up: 88 tests. Without it: 68 pass, 20 skip with a console note
+With the backend up: 106 tests. Without it: 86 pass, 20 skip with a console note
 naming the command to start one. Skipping rather than failing keeps `npm test`
 meaningful for someone working on the frontend alone.
 
@@ -346,7 +377,7 @@ backend's CORS allowlist is for. Under Compose there is only one origin: nginx
 serves the bundle and proxies `/api/` over the internal network, so the browser
 never makes a cross-origin request and CORS is not involved at all.
 
-`resolveBaseUrl()` in `src/api/client.js` is what lets one build serve both.
+`resolveBaseUrl()` in `src/api/client.ts` is what lets one build serve both.
 It returns `http://localhost:8000` in development and `""` — meaning relative —
 in a production build, so the bundle requests `/api/calculate` and `nginx.conf`
 decides where that goes. The backend can move without rebuilding the frontend.
@@ -424,29 +455,29 @@ _Carry this into the README at Step 8._
 
 | Date | Decision | Rationale |
 | --- | --- | --- |
-| 2026-09-02 | Calculation stays server-side | Single source of truth; keeps the assessment's backend meaningful. |
-| 2026-09-02 | Calculation logic lives in `logic/`, separate from `main.py` | Keeps arithmetic unit-testable without an HTTP client and stops routing concerns leaking into the domain. |
-| 2026-09-02 | `percentage(a, b)` means "a percent of b" — `(a / 100) * b` | Matches how a calculator's `%` key is normally read, keeps the two-operand shape of the other binary operations, and never divides by an operand. |
-| 2026-09-02 | Three domain exceptions | `DivisionByZeroError`, `InvalidInputError` and `ResultOverflowError` are the distinctions a user acts on. Overflow was initially folded into invalid input and split out on review: the operands are valid there, so blaming the input misdirects the user. |
-| 2026-09-02 | Every result passes a finiteness check | `**` raises `OverflowError` but `+` and `*` return `inf` silently, and `inf` is not valid JSON — checking on the way out makes the behaviour uniform. |
-| 2026-09-02 | Logic validates its own operands rather than trusting Pydantic | The logic layer is a library in its own right and is tested directly, so it cannot assume every caller came through the API. |
-| 2026-09-02 | `bool` is rejected as an operand | `bool` subclasses `int`, so a naive `isinstance` check would let `add(True, True)` return `2.0`. |
-| 2026-09-02 | Results are not rounded in `logic/` | Rounding is presentation; the domain returns full float precision and the UI decides how to display it. |
-| 2026-09-02 | `square_root` is unary; sending `b` is an error, not ignored | Silently discarding an operand hides a client bug; a 422 naming the problem is more useful than a wrong-looking answer. |
-| 2026-09-02 | Requests use `extra="forbid"` | A typo'd field name fails loudly instead of being dropped. |
-| 2026-09-02 | `ErrorResponse` carries a machine-readable `error` code beside `detail` | Lets the frontend branch on the failure type while leaving the wording free to change. |
-| 2026-09-02 | Domain errors are 400, schema errors 422 | Tells the client whether to fix the request's *shape* or its *values* — a distinction that matters for which UI message to show. |
-| 2026-09-02 | Errors are handled app-wide, not per route | Two `@app.exception_handler` registrations keep every route free of `try`/`except` and guarantee one error shape across the API. |
-| 2026-09-02 | The 422 body is reshaped into `ErrorResponse` | FastAPI's default is a list of Pydantic dicts; overriding it means the client parses one error format instead of two. |
-| 2026-09-02 | `OPERATIONS` dispatch lives in `main.py` | Keeps `logic/` unaware of the API enum; a test asserts the mapping is exhaustive so a new operation cannot be left unwired. |
-| 2026-09-02 | `/api/health` returns a typed `HealthResponse` | Puts the probe in the OpenAPI schema instead of returning an untyped dict, and gives Compose a documented endpoint to poll in Step 7. |
+| 2026-09-03 | Calculation stays server-side | Single source of truth; keeps the assessment's backend meaningful. |
+| 2026-09-03 | Calculation logic lives in `logic/`, separate from `main.py` | Keeps arithmetic unit-testable without an HTTP client and stops routing concerns leaking into the domain. |
+| 2026-09-03 | `percentage(a, b)` means "a percent of b" — `(a / 100) * b` | Matches how a calculator's `%` key is normally read, keeps the two-operand shape of the other binary operations, and never divides by an operand. |
+| 2026-09-03 | Three domain exceptions | `DivisionByZeroError`, `InvalidInputError` and `ResultOverflowError` are the distinctions a user acts on. Overflow was initially folded into invalid input and split out on review: the operands are valid there, so blaming the input misdirects the user. |
+| 2026-09-03 | Every result passes a finiteness check | `**` raises `OverflowError` but `+` and `*` return `inf` silently, and `inf` is not valid JSON — checking on the way out makes the behaviour uniform. |
+| 2026-09-03 | Logic validates its own operands rather than trusting Pydantic | The logic layer is a library in its own right and is tested directly, so it cannot assume every caller came through the API. |
+| 2026-09-03 | `bool` is rejected as an operand | `bool` subclasses `int`, so a naive `isinstance` check would let `add(True, True)` return `2.0`. |
+| 2026-09-03 | Results are not rounded in `logic/` | Rounding is presentation; the domain returns full float precision and the UI decides how to display it. |
+| 2026-09-03 | `square_root` is unary; sending `b` is an error, not ignored | Silently discarding an operand hides a client bug; a 422 naming the problem is more useful than a wrong-looking answer. |
+| 2026-09-03 | Requests use `extra="forbid"` | A typo'd field name fails loudly instead of being dropped. |
+| 2026-09-03 | `ErrorResponse` carries a machine-readable `error` code beside `detail` | Lets the frontend branch on the failure type while leaving the wording free to change. |
+| 2026-09-03 | Domain errors are 400, schema errors 422 | Tells the client whether to fix the request's *shape* or its *values* — a distinction that matters for which UI message to show. |
+| 2026-09-03 | Errors are handled app-wide, not per route | Two `@app.exception_handler` registrations keep every route free of `try`/`except` and guarantee one error shape across the API. |
+| 2026-09-03 | The 422 body is reshaped into `ErrorResponse` | FastAPI's default is a list of Pydantic dicts; overriding it means the client parses one error format instead of two. |
+| 2026-09-03 | `OPERATIONS` dispatch lives in `main.py` | Keeps `logic/` unaware of the API enum; a test asserts the mapping is exhaustive so a new operation cannot be left unwired. |
+| 2026-09-03 | `/api/health` returns a typed `HealthResponse` | Puts the probe in the OpenAPI schema instead of returning an untyped dict, and gives Compose a documented endpoint to poll in Step 7. |
 | 2026-09-03 | Frontend tests live in `frontend/tests/`, not beside the source | Keeps the shipped `src/` tree free of test files and matches the backend's `tests/` layout. |
-| 2026-09-03 | Vitest configured in `vite.config.js` rather than its own file | One config means the tests resolve modules exactly as the app does; a separate `vitest.config.js` can drift from the build. |
+| 2026-09-03 | Vitest configured in `vite.config.ts` rather than its own file | One config means the tests resolve modules exactly as the app does; a separate `vitest.config.ts` can drift from the build. |
 | 2026-09-03 | Tests query by role and label, never by test id | A passing test then also proves the control is reachable by screen reader and keyboard, so accessibility cannot silently regress. |
 | 2026-09-03 | Operand fields are `type="text"` with `inputMode="decimal"` | `type="number"` discards unparseable input before React sees it, so the user gets no explanation; text keeps validation ours while the input mode still raises a numeric keypad on mobile. |
 | 2026-09-03 | The second operand field is unmounted, not disabled, for square root | The backend rejects a `square_root` request carrying `b`, so the field should not exist to be filled. |
-| 2026-09-03 | Only `client.js` imports axios | Component tests mock a single module instead of stubbing HTTP, and swapping the HTTP library later touches one file. |
-| 2026-09-03 | `operations.js` duplicates the backend enum, and a test asserts the list | The ids go on the wire verbatim; the test turns a typo into a build failure rather than a 422 at runtime. |
+| 2026-09-03 | Only `client.ts` imports axios | Component tests mock a single module instead of stubbing HTTP, and swapping the HTTP library later touches one file. |
+| 2026-09-03 | `operations.ts` duplicates the backend enum, and a test asserts the list | The ids go on the wire verbatim; the test turns a typo into a build failure rather than a 422 at runtime. |
 | 2026-09-03 | No `@testing-library/jest-dom` or `user-event` | The suite runs on the packages already installed; the readability gain did not justify adding dependencies mid-assessment. |
 | 2026-09-03 | `API_BASE_URL` reads `VITE_API_URL` with a localhost fallback | Dev needs no configuration, and the Compose build in Step 7 can point the bundle at another host without a code change. |
 | 2026-09-03 | The result region shows the expression as well as the answer | `0.1 + 0.2 = 0.3` tells the user what was actually sent, which matters when the operands were coerced or the operation was switched. |
@@ -457,6 +488,12 @@ _Carry this into the README at Step 8._
 | 2026-09-03 | jsdom origin set to `http://localhost:5173` | jsdom enforces CORS on XHR, so the cross-layer suite verifies the backend's CORS config instead of bypassing it. |
 | 2026-09-03 | The cross-layer suite skips when no backend is running | Failing would make `npm test` useless to anyone working on the frontend alone; a console note names the command to start one. |
 | 2026-09-03 | `*.log` added to `.gitignore` | Uvicorn's redirected output was sitting untracked in `backend/`. |
+| 2026-09-03 | Python/FastAPI over the preferred Go | Chosen for delivery velocity, Pydantic's runtime validation and a strict TDD paradigm inside the time box — all of which depend on fluency in the stack. Submitting work whose every decision is defensible was judged more valuable than matching the language. The architecture ports to Go without redesign. |
+| 2026-09-03 | TypeScript with `strict` and `noUncheckedIndexedAccess` | The types are the frontend half of the wire contract; strictness is what makes them worth having, and the app is small enough that nothing needed an escape hatch. |
+| 2026-09-03 | `OperationId` is a union, not `string` | The ids go on the wire verbatim, so a typo becomes a compile error rather than a runtime 422. |
+| 2026-09-03 | `isUnary` takes `string`, not `OperationId` | It answers a question about arity; narrowing the parameter would make "is this unknown id unary?" unaskable, which is exactly what a caller validating input needs. |
+| 2026-09-03 | `client.ts` narrows error bodies with a type guard | Types vanish at runtime and a response arrives as `unknown`; asserting a shape the code cannot verify would be a lie the compiler happily accepts. |
+| 2026-09-03 | `build` runs `tsc -b` before `vite build` | Vite strips types without checking them, so without this a type error would ship silently. |
 | 2026-09-03 | nginx serves the built bundle; the Vite dev server is not containerised | A dev server in a production image ships a compiler, a file watcher and a JS runtime to do the job of a static file server. |
 | 2026-09-03 | nginx proxies `/api/` to the backend container | Makes the browser same-origin, so CORS drops out of the deployed path entirely and the API's address is not a build input. |
 | 2026-09-03 | A production build defaults `API_BASE_URL` to `""` | Relative requests are what the proxy needs; the alternative is baking a hostname into the bundle at build time and rebuilding whenever it changes. |

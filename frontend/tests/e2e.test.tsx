@@ -1,9 +1,9 @@
 /**
  * End-to-end: the real UI against the real API.
  *
- * Nothing is mocked here. `client.js` uses axios, axios uses jsdom's
+ * Nothing is mocked here. `client.ts` uses axios, axios uses jsdom's
  * XMLHttpRequest, and jsdom enforces CORS -- so a request from this suite is
- * subject to the same origin checks a browser applies. `vite.config.js` sets
+ * subject to the same origin checks a browser applies. `vite.config.ts` sets
  * the jsdom document origin to http://localhost:5173 so those checks are the
  * ones the real app will face.
  *
@@ -23,12 +23,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import axios from 'axios'
 import { describe, expect, it } from 'vitest'
 
-import { API_BASE_URL, ApiError, calculate } from '../src/api/client.js'
-import Calculator from '../src/components/Calculator.jsx'
+import { API_BASE_URL, ApiError, calculate } from '../src/api/client'
+import type { CalculationRequest, ErrorCode } from '../src/api/client'
+import Calculator from '../src/components/Calculator'
 
 const WAIT = { timeout: 5000 }
 
-async function backendIsUp() {
+async function backendIsUp(): Promise<boolean> {
   try {
     const { data } = await axios.get(`${API_BASE_URL}/api/health`, { timeout: 2000 })
     return data.status === 'ok'
@@ -45,12 +46,23 @@ if (!available) {
   )
 }
 
-function type(label, value) {
+function type(label: RegExp, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } })
 }
 
 function submit() {
   fireEvent.click(screen.getByRole('button', { name: /calculate/i }))
+}
+
+/** Await a call that is expected to fail and hand back the ApiError. */
+async function rejection(promise: Promise<unknown>): Promise<ApiError> {
+  const resolved = Symbol('resolved')
+  const outcome = await promise.then(() => resolved).catch((error: unknown) => error)
+
+  if (outcome === resolved) {
+    throw new Error('expected the call to reject, but it resolved')
+  }
+  return outcome as ApiError
 }
 
 describe.skipIf(!available)('the API is reachable from the app origin', () => {
@@ -66,7 +78,7 @@ describe.skipIf(!available)('the API is reachable from the app origin', () => {
   })
 })
 
-describe.skipIf(!available)('client.js against the real API', () => {
+describe.skipIf(!available)('client.ts against the real API', () => {
   it.each([
     ['add', 2, 3, 5],
     ['subtract', 10, 3, 7],
@@ -74,7 +86,7 @@ describe.skipIf(!available)('client.js against the real API', () => {
     ['divide', 7, 2, 3.5],
     ['power', 2, 3, 8],
     ['percentage', 15, 200, 30],
-  ])('computes %s', async (operation, a, b, expected) => {
+  ] as const)('computes %s', async (operation, a, b, expected) => {
     const response = await calculate({ operation, a, b })
     expect(response.result).toBeCloseTo(expected)
   })
@@ -101,13 +113,16 @@ describe.skipIf(!available)('real error codes reach the UI layer intact', () => 
     ['invalid_input', { operation: 'square_root', a: -1 }],
     ['result_overflow', { operation: 'multiply', a: 1e308, b: 10 }],
     ['validation_error', { operation: 'add', a: 1 }],
-  ])('maps a real failure to %s', async (code, request) => {
-    const error = await calculate(request).catch((failure) => failure)
+  ] as [ErrorCode, CalculationRequest][])(
+    'maps a real failure to %s',
+    async (code, request) => {
+      const error = await rejection(calculate(request))
 
-    expect(error).toBeInstanceOf(ApiError)
-    expect(error.code).toBe(code)
-    expect(error.message).toBeTruthy()
-  })
+      expect(error).toBeInstanceOf(ApiError)
+      expect(error.code).toBe(code)
+      expect(error.message).toBeTruthy()
+    },
+  )
 })
 
 describe.skipIf(!available)('the full stack, through the UI', () => {

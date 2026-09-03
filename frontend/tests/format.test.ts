@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { formatResult } from '../src/utils/format.js'
+import { formatResult } from '../src/utils/format'
 
 describe('formatResult', () => {
   it('renders a whole number without a trailing decimal', () => {

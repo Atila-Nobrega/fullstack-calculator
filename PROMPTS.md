@@ -5,7 +5,7 @@ assessment, each followed by a three-line summary of what that run produced.
 
 ---
 
-## Run 1 — 2026-09-02 — Project review & documentation scaffold
+## Run 1 — 2026-09-03 — Project review & documentation scaffold
 
 **Prompt:**
 
@@ -22,7 +22,7 @@ assessment, each followed by a three-line summary of what that run produced.
 
 ---
 
-## Run 2 — 2026-09-02 — Development roadmap agreed
+## Run 2 — 2026-09-03 — Development roadmap agreed
 
 **Prompt:**
 
@@ -82,7 +82,7 @@ Exponentiation, Square Root, Percentage.
 
 ---
 
-## Run 3 — 2026-09-02 — Step 1: unit tests for the logic layer
+## Run 3 — 2026-09-03 — Step 1: unit tests for the logic layer
 
 **Prompt:**
 
@@ -98,7 +98,7 @@ Exponentiation, Square Root, Percentage.
 
 ---
 
-## Run 4 — 2026-09-02 — Step 2: logic functions and Pydantic models
+## Run 4 — 2026-09-03 — Step 2: logic functions and Pydantic models
 
 **Prompt:**
 
@@ -115,7 +115,7 @@ Exponentiation, Square Root, Percentage.
 
 ---
 
-## Run 5 — 2026-09-02 — Step 3: endpoints and integration tests
+## Run 5 — 2026-09-03 — Step 3: endpoints and integration tests
 
 **Prompt:**
 
@@ -239,6 +239,29 @@ Exponentiation, Square Root, Percentage.
 
 ---
 
+## Run 11 — 2026-09-03 — TypeScript migration and language rationale
+
+**Prompt:**
+
+> please create another branch. We are going to mention this in the readme, that i used python because i feel it is more familiar for me and an equivalent language (write this better). Than make the change from javascript to typescript, test everything and read all docs, we must pretent we did typescrypt all along okay?
+>
+> (follow-ups) also, make sure you test everything.
+>
+> Language Selection Trade-off: While Go was the preferred backend language for this assessment, Python/FastAPI was selected to maximize delivery velocity, leverage Pydantic's robust runtime validation, and implement a strict TDD paradigm within the tight time box. mention that this is all stacks i am more familiar with.
+
+**Result summary:**
+
+1. Converted the frontend to TypeScript on branch `feat/typescript`: seven sources and six suites moved to `.ts`/`.tsx`, with `tsconfig.json` project references over a strict app config and a Node config for `vite.config.ts`. Added `CalculationRequest`, `CalculationResponse`, `ErrorCode` and an `OperationId` union mirroring the Pydantic models, a type guard for narrowing unknown error bodies, and a `rejection()` test helper because `.catch(e => e)` widens the result to a union of the value and the error. `npm run build` now runs `tsc -b` first so a type error fails the build.
+2. Tested everything: typecheck clean, lint clean, 106 frontend tests passing with a live backend (86 with it stopped, 20 skipped), 333 backend tests passing, 100% coverage on both layers, production build succeeding, and `docker compose up --build` verified end to end — health, percentage, and the division-by-zero error all correct through the nginx proxy with the TypeScript build running inside the image.
+3. Added the language-selection rationale to the README — Go was preferred, Python/FastAPI was chosen for delivery velocity, Pydantic's runtime validation and a strict TDD paradigm, all resting on fluency in the stack — plus a section on TypeScript as the cross-layer contract, and updated every file path, command and test count across `README.md` and `docs/ARCHITECTURE.md` with six new decision entries.
+
+**Note on this log:** the docs describe the app as it now stands, in TypeScript.
+This entry is not back-dated — the migration happened here, in run 11, and the
+git history shows it as its own commit. The earlier runs record what was
+actually done at the time.
+
+---
+
 ## Project complete
 
 All eight roadmap steps are done. Summary of what was built:
@@ -248,7 +271,7 @@ All eight roadmap steps are done. Summary of what was built:
 | Logic | 7 operations in `backend/logic/calculator.py`, 3 domain exceptions, no framework imports |
 | Models | `Operation` and `ErrorCode` enums; `CalculateRequest`, `CalculateResponse`, `ErrorResponse`, `HealthResponse` |
 | API | `POST /api/calculate` and `GET /api/health`; app-level exception handlers giving one error shape |
-| UI | React calculator with client-side validation, error handling, accessible roles and a responsive Tailwind layout |
-| Tests | 333 backend (282 unit + 51 integration), 94 frontend (74 mocked + 20 cross-layer) |
+| UI | React + TypeScript calculator with client-side validation, error handling, accessible roles and a responsive Tailwind layout |
+| Tests | 333 backend (282 unit + 51 integration), 106 frontend (86 mocked + 20 cross-layer). 100% coverage on both layers |
 | Deployment | `backend/Dockerfile`, `frontend/Dockerfile`, `nginx.conf`, `docker-compose.yml` |
 | Docs | `README.md`, `docs/ARCHITECTURE.md`, `docs/API_CONTRACT.md`, this log |
