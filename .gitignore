@@ -7,6 +7,15 @@ backend/.venv/
 backend/__pycache__/
 **/__pycache__/
 *.pyc
+.pytest_cache/
+
+# Coverage output
+.coverage
+htmlcov/
+frontend/coverage/
+
+# Server logs
+*.log
 
 # Env files
 .env
