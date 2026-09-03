@@ -1,0 +1,51 @@
+# Full-stack deployment: nginx serving the React bundle in front of the API.
+#
+#   docker compose up --build     then open http://localhost:8080
+#
+# The browser only ever talks to the frontend container. Requests to /api are
+# proxied to the backend over Compose's internal network, so the two are
+# same-origin from the browser's point of view and CORS does not apply.
+
+services:
+  backend:
+    build: ./backend
+    container_name: calculator-backend
+    # Published only so the OpenAPI docs are reachable at
+    # http://localhost:8000/docs while developing. The frontend does not use
+    # this mapping -- it reaches the API over the internal network -- so a real
+    # deployment would drop it and leave the API unexposed.
+    ports:
+      - '8000:8000'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2).status == 200 else 1)",
+        ]
+      # 60s in steady state to keep the logs quiet; start_interval polls every
+      # 2s until the first pass so `compose up` is not held back by it.
+      interval: 60s
+      start_interval: 2s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Empty means the bundle requests relative paths, which nginx proxies.
+        VITE_API_URL: ''
+    container_name: calculator-frontend
+    ports:
+      - '8080:80'
+    depends_on:
+      backend:
+        # Waits for the health check to pass, not merely for the container to
+        # exist. nginx resolves `backend` when it starts and would fail outright
+        # if the name were not yet resolvable.
+        condition: service_healthy
+    restart: unless-stopped

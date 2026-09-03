@@ -1,0 +1,11 @@
+# The host virtualenv holds Windows binaries that would not run in the image,
+# and it is large enough to slow every build if sent to the daemon.
+.venv/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+
+Dockerfile
+.dockerignore

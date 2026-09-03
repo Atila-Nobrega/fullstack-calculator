@@ -1,0 +1,15 @@
+# Installed fresh inside the image by `npm ci`; the host copy may hold
+# platform-specific binaries and is by far the largest thing here.
+node_modules/
+
+# Rebuilt in the image.
+dist/
+
+tests/
+coverage/
+.env
+.env.local
+*.log
+
+Dockerfile
+.dockerignore
