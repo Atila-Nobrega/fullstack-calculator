@@ -1,0 +1,19 @@
+# Coverage settings, read when pytest is run with --cov.
+#
+# These cannot live in pytest.ini: coverage only reads .coveragerc, setup.cfg,
+# tox.ini or pyproject.toml.
+
+[run]
+# Measure the application only. Including the test modules would report the
+# coverage of the tests by the tests, which inflates the figure and says
+# nothing about the code under test.
+source =
+    logic
+    models
+    main
+
+[report]
+show_missing = True
+skip_covered = False
+exclude_lines =
+    pragma: no cover
