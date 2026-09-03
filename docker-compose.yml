@@ -24,10 +24,9 @@ services:
           '-c',
           "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2).status == 200 else 1)",
         ]
-      # 60s in steady state to keep the logs quiet; start_interval polls every
-      # 2s until the first pass so `compose up` is not held back by it.
+      # Docker polls more frequently during start_period, so a long steady-state
+      # interval keeps the logs quiet without slowing startup.
       interval: 60s
-      start_interval: 2s
       timeout: 3s
       retries: 5
       start_period: 5s

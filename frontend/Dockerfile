@@ -33,7 +33,7 @@ COPY --from=build /app/dist /usr/share/nginx/html
 
 EXPOSE 80
 
-HEALTHCHECK --interval=60s --start-interval=2s --timeout=3s --start-period=5s --retries=5 \
+HEALTHCHECK --interval=60s --timeout=3s --start-period=5s --retries=5 \
     CMD wget --quiet --spider http://127.0.0.1/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

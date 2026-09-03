@@ -29,11 +29,7 @@ EXPOSE 8000
 
 # Compose gates the frontend on this, so nginx never starts against an API that
 # is not yet accepting connections. urllib avoids installing curl for one call.
-#
-# start-interval polls every 2s until the first pass, then interval takes over
-# at 60s. Without it the first check would not run until 60s in, and the
-# frontend -- which waits on this -- would sit idle that whole time.
-HEALTHCHECK --interval=60s --start-interval=2s --timeout=3s --start-period=5s --retries=5 \
+HEALTHCHECK --interval=60s --timeout=3s --start-period=5s --retries=5 \
     CMD python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2).status == 200 else 1)"
 
 # 0.0.0.0, not 127.0.0.1: the port has to be reachable from outside the
